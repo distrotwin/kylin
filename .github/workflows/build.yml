@@ -1,0 +1,97 @@
+name: 构建镜像
+
+# 一个 job 对应一个（版本 × 架构），三档在 job 内部顺序产出——三档共用同一个 stage，
+# 拆成「版本 × 架构 × 档位」会把 stage 重复构建三遍。
+#
+# buildkit 用 commit SHA 钉死，与 .gitmodules 里的 submodule 指向同一个 commit；
+# 被调用的 workflow 自己会断言这两者相等，不一致就直接失败。
+on:
+  push:
+    branches: [main]
+    paths: ['distros/**', '.github/workflows/**', 'buildkit']
+  pull_request:
+    paths: ['distros/**', '.github/workflows/**', 'buildkit']
+  workflow_dispatch:
+    inputs:
+      include-loongarch:
+        description: "把 LoongArch 一并构建（需先跑通 smoke test）"
+        type: boolean
+        default: false
+      push:
+        description: "校验通过后推送到 GHCR"
+        type: boolean
+        default: false
+
+jobs:
+  # ── 原生架构。GitHub 的 amd64 与 arm64 runner 都是原生，不需要模拟
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { did: v4,     prefix: v4,     arch: amd64, runner: ubuntu-22.04 }
+          - { did: v4,     prefix: v4,     arch: arm64, runner: ubuntu-22.04-arm }
+          - { did: v10sp1, prefix: v10sp1, arch: amd64, runner: ubuntu-22.04 }
+          - { did: v10sp1, prefix: v10sp1, arch: arm64, runner: ubuntu-22.04-arm }
+          - { did: v11,    prefix: v11,    arch: amd64, runner: ubuntu-22.04 }
+          - { did: v11,    prefix: v11,    arch: arm64, runner: ubuntu-22.04-arm }
+    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@a77c5dee4f05a804a92fa6c3392f37eb4c7d984b
+    with:
+      distro-id:  ${{ matrix.did }}
+      arch:       ${{ matrix.arch }}
+      runner:     ${{ matrix.runner }}
+      image:      kylin
+      tag-prefix: ${{ matrix.prefix }}
+      needs-qemu: false
+      push:       ${{ inputs.push == true }}
+
+  # ── LoongArch。没有托管 runner，只能在 amd64 上用 QEMU 模拟。
+  #
+  # 默认不跑，原因不是性能而是正确性未定：麒麟两个版本用的是两套互不兼容的
+  # LoongArch ABI——V10 SP1 的 loongarch64 是旧世界（动态链接器 /lib64/ld.so.1），
+  # V11 的 loong64 是新世界（/lib64/ld-linux-loongarch-lp64d.so.1）。上游 QEMU
+  # 只保证新世界。旧世界那一支要先单独跑通 smoke test，确认它在上游 QEMU 下
+  # 能真正执行而不只是被加载，才谈得上进发布矩阵。
+  #
+  # 另外这两支不是同一条产品线的等价物：V10 SP1 的 LoongArch 版本是 Loongnix
+  # 血脉（libstdc++ 带 lnd 标记），glibc 2.28 + gcc 8.3，比 amd64 的 2.31 + gcc 10.3
+  # 落后一个大版本。conf 里已按架构分别写了基线。
+  loongarch:
+    if: inputs.include-loongarch == true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { did: v10sp1, prefix: v10sp1, arch: loongarch64 }
+          - { did: v11,    prefix: v11,    arch: loong64 }
+    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@a77c5dee4f05a804a92fa6c3392f37eb4c7d984b
+    with:
+      distro-id:  ${{ matrix.did }}
+      arch:       ${{ matrix.arch }}
+      runner:     ubuntu-22.04
+      image:      kylin
+      tag-prefix: ${{ matrix.prefix }}
+      needs-qemu: true
+      push:       ${{ inputs.push == true }}
+
+  # ── 把各架构的单架构 tag 并成 manifest list。只在实际推送过之后才有意义。
+  #
+  # latest 指向最高版本的 devel，这是有意的选择，代价也明确：一旦将来出现 V12，
+  # 钉 latest 的流水线会从 glibc 2.38 静默切到新版本。README 里已写明并建议钉
+  # 带日期的不可变 tag。
+  manifest:
+    needs: [native]
+    if: ${{ inputs.push == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { prefix: v4,     arches: "amd64 arm64", latest: "" }
+          - { prefix: v10sp1, arches: "amd64 arm64", latest: "" }
+          - { prefix: v11,    arches: "amd64 arm64", latest: "devel" }
+    uses: distrotwin/buildkit/.github/workflows/manifest.yml@a77c5dee4f05a804a92fa6c3392f37eb4c7d984b
+    with:
+      image:       kylin
+      tag-prefix:  ${{ matrix.prefix }}
+      arches:      ${{ matrix.arches }}
+      latest-tier: ${{ matrix.latest }}

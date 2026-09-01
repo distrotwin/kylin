@@ -1,0 +1,6 @@
+*.tar
+out/
+work/
+logs/
+localrepo/
+__pycache__/
