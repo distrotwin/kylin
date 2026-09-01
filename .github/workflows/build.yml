@@ -22,6 +22,14 @@ on:
         type: boolean
         default: false
 
+# 可复用 workflow 声明的权限不能超过调用方持有的权限。本仓库的
+# default_workflow_permissions 是 read，调用方不显式授权的话，被调用方要的
+# packages: write 就成了「超额请求」，整个 run 在启动阶段被拒（startup_failure），
+# 连一个 job 都不会起、也不产生日志——排查时很容易以为是 uses: 的引用写错了。
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # ── 原生架构。GitHub 的 amd64 与 arm64 runner 都是原生，不需要模拟
   native:
