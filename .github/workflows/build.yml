@@ -33,7 +33,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@746cf9d15394c6a0e15f8968b01c6b1586901de6
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@b919ccb6318aae992f4ff7f294601af18f86e4b1
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@746cf9d15394c6a0e15f8968b01c6b1586901de6
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@b919ccb6318aae992f4ff7f294601af18f86e4b1
     with:
       distro-id:  v11
       arch:       loong64
@@ -82,7 +82,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@746cf9d15394c6a0e15f8968b01c6b1586901de6
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@b919ccb6318aae992f4ff7f294601af18f86e4b1
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -96,12 +96,13 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@746cf9d15394c6a0e15f8968b01c6b1586901de6
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@b919ccb6318aae992f4ff7f294601af18f86e4b1
     with:
-      distro-id: v11
-      arch:      loong64
-      tier:      ${{ matrix.tier }}
-      runner:    ubuntu-24.04   # 同上：22.04 的 QEMU 6.2 不支持 LoongArch
+      distro-id:  v11
+      arch:       loong64
+      tier:       ${{ matrix.tier }}
+      runner:     ubuntu-24.04   # 同上：22.04 的 QEMU 6.2 不支持 LoongArch
+      needs-qemu: true           # 测试阶段也要 docker run 被测镜像，binfmt 两个阶段各需一次
 
   # expected 是结构性守卫：某个 job 在跑到检查前就挂掉不会产出结果，检查总数会
   # 「合法地」变低而基线放过它，结果数对不上则一定抓得住。
@@ -109,7 +110,7 @@ jobs:
   report:
     needs: [test, test-loong]
     if: always()
-    uses: distrotwin/buildkit/.github/workflows/report.yml@746cf9d15394c6a0e15f8968b01c6b1586901de6
+    uses: distrotwin/buildkit/.github/workflows/report.yml@b919ccb6318aae992f4ff7f294601af18f86e4b1
     with:
       distros:  "v4 v10sp1 v11"
       expected: ${{ inputs.include-loongarch && 21 || 18 }}
@@ -134,7 +135,7 @@ jobs:
           - { did: v11,    prefix: v11,    tier: base,  latest: false }
           # latest 指向最高版本的 devel
           - { did: v11,    prefix: v11,    tier: devel, latest: true }
-    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@746cf9d15394c6a0e15f8968b01c6b1586901de6
+    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@b919ccb6318aae992f4ff7f294601af18f86e4b1
     with:
       distro-id:  ${{ matrix.did }}
       tier:       ${{ matrix.tier }}
