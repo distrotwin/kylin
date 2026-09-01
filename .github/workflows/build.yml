@@ -33,7 +33,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@97af05043ece47ee27fe5c2f8fb3e4b54eb482fe
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@d98c792e33c491db450ba45d3f2a7d52388ec622
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -58,12 +58,17 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@97af05043ece47ee27fe5c2f8fb3e4b54eb482fe
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@d98c792e33c491db450ba45d3f2a7d52388ec622
     with:
       distro-id:  v11
       arch:       loong64
       tier:       ${{ matrix.tier }}
-      runner:     ubuntu-22.04
+      # 这里必须用 24.04 而不是照惯例取最低版本：LoongArch 的用户态模拟是
+      # QEMU 7.1 才加的，而 Ubuntu 22.04 只带 6.2，binfmt 里根本没有
+      # qemu-loongarch64 条目。实测报错是「loong64 can neither be executed
+      # natively nor via qemu user emulation」，那句话不提版本，很容易被当成
+      # binfmt 没装。产物是 loong64 的，与宿主发行版新旧无关。
+      runner:     ubuntu-24.04
       needs-qemu: true
 
   # if: always() —— 某个镜像没建出来，其余镜像的测试结论仍然有价值，
@@ -77,7 +82,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@97af05043ece47ee27fe5c2f8fb3e4b54eb482fe
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@d98c792e33c491db450ba45d3f2a7d52388ec622
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -91,12 +96,12 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@97af05043ece47ee27fe5c2f8fb3e4b54eb482fe
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@d98c792e33c491db450ba45d3f2a7d52388ec622
     with:
       distro-id: v11
       arch:      loong64
       tier:      ${{ matrix.tier }}
-      runner:    ubuntu-22.04
+      runner:    ubuntu-24.04   # 同上：22.04 的 QEMU 6.2 不支持 LoongArch
 
   # expected 是结构性守卫：某个 job 在跑到检查前就挂掉不会产出结果，检查总数会
   # 「合法地」变低而基线放过它，结果数对不上则一定抓得住。
@@ -104,7 +109,7 @@ jobs:
   report:
     needs: [test, test-loong]
     if: always()
-    uses: distrotwin/buildkit/.github/workflows/report.yml@97af05043ece47ee27fe5c2f8fb3e4b54eb482fe
+    uses: distrotwin/buildkit/.github/workflows/report.yml@d98c792e33c491db450ba45d3f2a7d52388ec622
     with:
       distros:  "v4 v10sp1 v11"
       expected: ${{ inputs.include-loongarch && 21 || 18 }}
@@ -129,7 +134,7 @@ jobs:
           - { did: v11,    prefix: v11,    tier: base,  latest: false }
           # latest 指向最高版本的 devel
           - { did: v11,    prefix: v11,    tier: devel, latest: true }
-    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@97af05043ece47ee27fe5c2f8fb3e4b54eb482fe
+    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@d98c792e33c491db450ba45d3f2a7d52388ec622
     with:
       distro-id:  ${{ matrix.did }}
       tier:       ${{ matrix.tier }}
