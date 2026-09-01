@@ -1,14 +1,16 @@
 name: 构建镜像
 
-# 四阶段：stage（仅 selfhost）→ 单镜像构建 → 单镜像测试 → 汇总报告
+# 两个阶段，一个 job 只管一个镜像：
 #
-# 一个 job 只负责一个镜像。原先一个 job 串行建三档，三档各跑一遍完整的
-# apt update + download（把几百 MB 下了三遍），且一档失败连带丢掉同 job 已建好的
-# 其它档。按第十一轮实测：mmdebstrap 三档独立，45 分钟并行后降到最慢档 29 分钟；
-# selfhost 的阶段 1 三档共用且占三分之二，所以单列 stage 产出制品传下去。
+#   阶段一 build   版本 × 架构 × 档位 = 18 个 job 并行，各自产出一个镜像
+#   阶段二 test    上一阶段全部完成后解锁，逐个装载镜像、真正启动、跑完整检查集
+#                  最后汇总成一份测试报告
 #
-# buildkit 用 commit SHA 钉死，与 .gitmodules 的 submodule 指向同一 commit，
-# 被调用的 workflow 自己会断言二者相等。
+# 不设中间的 stage 阶段：selfhost 的 debootstrap 实测只占 4 分钟，而三个档位本来
+# 并行，共用一份 stage 省的是 CPU 不是墙钟，却要多一层依赖和一次几百 MB 的制品往返。
+#
+# 期望失败由各版本 conf 的 XFAIL 声明，计入 xfail 不构成 CI 失败——老系统上有些
+# 检查注定红且红得有道理，不强求研究仓库的每一条都过。
 on:
   push:
     branches: [main]
@@ -16,70 +18,30 @@ on:
   pull_request:
     paths: ['distros/**', '.github/workflows/**', 'buildkit']
   workflow_dispatch:
-    inputs:
-      include-loongarch:
-        description: "把 V11 的 loong64 一并构建（需 QEMU 模拟）"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  # ── 阶段一：selfhost 的共用 stage。mmdebstrap 路径不需要
-  stage:
+  build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { did: v4,     arch: amd64, runner: ubuntu-22.04 }
-          - { did: v4,     arch: arm64, runner: ubuntu-22.04-arm }
-          - { did: v10sp1, arch: amd64, runner: ubuntu-22.04 }
-          - { did: v10sp1, arch: arm64, runner: ubuntu-22.04-arm }
-    uses: distrotwin/buildkit/.github/workflows/stage-deb.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
-    with:
-      distro-id: ${{ matrix.did }}
-      arch:      ${{ matrix.arch }}
-      runner:    ${{ matrix.runner }}
-
-  # ── 阶段二 a：selfhost 各档位，复用上游 stage
-  build-selfhost:
-    needs: [stage]
-    strategy:
-      fail-fast: false
-      matrix:
-        did: [v4, v10sp1]
+        did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
-    with:
-      distro-id:   ${{ matrix.did }}
-      arch:        ${{ matrix.arch }}
-      tier:        ${{ matrix.tier }}
-      runner:      ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
-      needs-stage: true
-
-  # ── 阶段二 b：mmdebstrap 各档位，彼此完全独立
-  build-mmdebstrap:
-    strategy:
-      fail-fast: false
-      matrix:
-        did: [v11]
-        arch: [amd64, arm64]
-        tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@1c517ce341e7f63d9783b84420c65d5340cf9998
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
       tier:      ${{ matrix.tier }}
       runner:    ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
 
-  # ── 阶段三：干净机器上装载、启动、全面测试
-  #
-  # 不设 fail-fast：一个镜像挂掉不该掩盖其余镜像的真实状态，报告要完整。
+  # if: always() —— 某个镜像没建出来，其余镜像的测试结论仍然有价值，
+  # 报告要完整而不是一挂全无。缺的那几份由汇总阶段的 expected 抓。
   test:
-    needs: [build-selfhost, build-mmdebstrap]
+    needs: [build]
     if: always()
     strategy:
       fail-fast: false
@@ -87,20 +49,17 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@1c517ce341e7f63d9783b84420c65d5340cf9998
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
       tier:      ${{ matrix.tier }}
       runner:    ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
 
-  # ── 阶段四：汇总。expected 是结构性守卫——3 版本 × 2 架构 × 3 档位 = 18 份结果，
-  # 少一份就说明有 job 没跑到检查这一步，而那种情况下检查总数会「合法地」变低、
-  # 光看基线抓不住。baseline 取 v10sp1 实测每版本每架构约 134 项的保守下限。
   report:
     needs: [test]
     if: always()
-    uses: distrotwin/buildkit/.github/workflows/report.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
+    uses: distrotwin/buildkit/.github/workflows/report.yml@1c517ce341e7f63d9783b84420c65d5340cf9998
     with:
       expected: 18
       baseline: 700
