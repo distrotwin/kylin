@@ -35,7 +35,7 @@ jobs:
           - { did: v10sp1, prefix: v10sp1, arch: arm64, runner: ubuntu-22.04-arm }
           - { did: v11,    prefix: v11,    arch: amd64, runner: ubuntu-22.04 }
           - { did: v11,    prefix: v11,    arch: arm64, runner: ubuntu-22.04-arm }
-    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@a77c5dee4f05a804a92fa6c3392f37eb4c7d984b
+    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@e7781a452b118989bd9f92caebca6154484f0bfc
     with:
       distro-id:  ${{ matrix.did }}
       arch:       ${{ matrix.arch }}
@@ -47,11 +47,15 @@ jobs:
 
   # ── LoongArch。没有托管 runner，只能在 amd64 上用 QEMU 模拟。
   #
-  # 默认不跑，原因不是性能而是正确性未定：麒麟两个版本用的是两套互不兼容的
-  # LoongArch ABI——V10 SP1 的 loongarch64 是旧世界（动态链接器 /lib64/ld.so.1），
-  # V11 的 loong64 是新世界（/lib64/ld-linux-loongarch-lp64d.so.1）。上游 QEMU
-  # 只保证新世界。旧世界那一支要先单独跑通 smoke test，确认它在上游 QEMU 下
-  # 能真正执行而不只是被加载，才谈得上进发布矩阵。
+  # 只有 V11 的 loong64 在列。V10 SP1 的 loongarch64 已实测排除：
+  # 它是旧世界 ABI，glibc 2.28 仍在调用 syscall 79/80（newfstatat / fstat），
+  # 而 LoongArch 新世界把这两个调用去掉了，上游 QEMU 的 loongarch64 target
+  # 因此没有实现。最小 rootfs 实跑的表现是打开 libtinfo.so.6、读出 ELF 头后
+  # 报 Unknown syscall 80 退出 127。没有龙芯补丁版 QEMU 或真机就造不出来。
+  #
+  # V11 的 loong64 通过了同一项 smoke test（bash 正常退出，内建 MACHTYPE 为
+  # loongarch64-unknown-linux-gnu）。但跑通一个 bash 不等于跑得完一次 bootstrap，
+  # 完整构建要在模拟下执行几百个维护者脚本，所以仍留在开关后面等首次实跑。
   #
   # 另外这两支不是同一条产品线的等价物：V10 SP1 的 LoongArch 版本是 Loongnix
   # 血脉（libstdc++ 带 lnd 标记），glibc 2.28 + gcc 8.3，比 amd64 的 2.31 + gcc 10.3
@@ -62,9 +66,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { did: v10sp1, prefix: v10sp1, arch: loongarch64 }
+          # v10sp1 的 loongarch64 已实测排除，见上方注释，故不列入
           - { did: v11,    prefix: v11,    arch: loong64 }
-    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@a77c5dee4f05a804a92fa6c3392f37eb4c7d984b
+    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@e7781a452b118989bd9f92caebca6154484f0bfc
     with:
       distro-id:  ${{ matrix.did }}
       arch:       ${{ matrix.arch }}
@@ -89,7 +93,7 @@ jobs:
           - { prefix: v4,     arches: "amd64 arm64", latest: "" }
           - { prefix: v10sp1, arches: "amd64 arm64", latest: "" }
           - { prefix: v11,    arches: "amd64 arm64", latest: "devel" }
-    uses: distrotwin/buildkit/.github/workflows/manifest.yml@a77c5dee4f05a804a92fa6c3392f37eb4c7d984b
+    uses: distrotwin/buildkit/.github/workflows/manifest.yml@e7781a452b118989bd9f92caebca6154484f0bfc
     with:
       image:       kylin
       tag-prefix:  ${{ matrix.prefix }}

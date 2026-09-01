@@ -47,7 +47,13 @@ amd64 与 arm64 由原生 runner 构建。LoongArch 尚未发布，原因见下�
 
 也就是说，在 amd64 上验过的构建结论，不能直接套用到 LoongArch 镜像上。这是厂商产品线的事实，不是本仓库的取舍。
 
-LoongArch 还有一层：麒麟两个版本用的是两套互不兼容的 ABI。V10 SP1 的架构名是 `loongarch64`，属于旧世界，动态链接器为 `/lib64/ld.so.1`；V11 是 `loong64`，属于新世界，动态链接器为 `/lib64/ld-linux-loongarch-lp64d.so.1`。上游 QEMU 只保证新世界，所以旧世界那一支要先单独验证能否真正执行，通过之后才会进发布矩阵。
+LoongArch 还有一层：麒麟两个版本用的是两套互不兼容的 ABI。V10 SP1 的架构名是 `loongarch64`，属于旧世界，动态链接器为 `/lib64/ld.so.1`；V11 是 `loong64`，属于新世界，动态链接器为 `/lib64/ld-linux-loongarch-lp64d.so.1`。两者的 multiarch 三元组同名，产物却不可互换。
+
+这个差别已经实测过，结论是**旧世界那一支在上游 QEMU 下跑不起来**。把两版的 `libc6` 与 `bash` 各拼成一个最小 rootfs，用 `qemu-loongarch64-static -L` 直接执行：V11 的 bash 正常退出，内建变量 `MACHTYPE=loongarch64-unknown-linux-gnu`（编译期烧进二进制，可以证明执行的确实是目标架构的产物）；V10 SP1 的 bash 停在动态链接阶段，`-strace` 显示它打开了 `libtinfo.so.6`、读出了 ELF 头，然后撞上 `Unknown syscall 80`。
+
+79 与 80 是通用 Linux ABI 的 `newfstatat` 与 `fstat`。LoongArch 新世界把这两个系统调用去掉了，只保留 `statx`，因此上游 QEMU 的 loongarch64 target 没有实现它们；而旧世界的 glibc 2.28 仍在调用。这不是缺库或路径问题，是系统调用 ABI 本身不同——没有龙芯补丁版 QEMU 或真机，`v10sp1` 的 LoongArch 镜像造不出来。
+
+V11 的 `loong64` 通过了这项 smoke test，但**跑通一个 bash 不等于跑得完一次 bootstrap**：完整构建要在模拟下执行几百个包的维护者脚本，是另一个量级。它目前仍在 `workflow_dispatch` 开关后面，等首次实跑确认。
 
 V4 没有任何 LoongArch 架构的软件源，不会有对应镜像。
 
