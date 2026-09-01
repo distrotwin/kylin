@@ -1,10 +1,14 @@
 name: 构建镜像
 
-# 一个 job 对应一个（版本 × 架构），三档在 job 内部顺序产出——三档共用同一个 stage，
-# 拆成「版本 × 架构 × 档位」会把 stage 重复构建三遍。
+# 四阶段：stage（仅 selfhost）→ 单镜像构建 → 单镜像测试 → 汇总报告
 #
-# buildkit 用 commit SHA 钉死，与 .gitmodules 里的 submodule 指向同一个 commit；
-# 被调用的 workflow 自己会断言这两者相等，不一致就直接失败。
+# 一个 job 只负责一个镜像。原先一个 job 串行建三档，三档各跑一遍完整的
+# apt update + download（把几百 MB 下了三遍），且一档失败连带丢掉同 job 已建好的
+# 其它档。按第十一轮实测：mmdebstrap 三档独立，45 分钟并行后降到最慢档 29 分钟；
+# selfhost 的阶段 1 三档共用且占三分之二，所以单列 stage 产出制品传下去。
+#
+# buildkit 用 commit SHA 钉死，与 .gitmodules 的 submodule 指向同一 commit，
+# 被调用的 workflow 自己会断言二者相等。
 on:
   push:
     branches: [main]
@@ -14,96 +18,89 @@ on:
   workflow_dispatch:
     inputs:
       include-loongarch:
-        description: "把 LoongArch 一并构建（需先跑通 smoke test）"
-        type: boolean
-        default: false
-      push:
-        description: "校验通过后推送到 GHCR"
+        description: "把 V11 的 loong64 一并构建（需 QEMU 模拟）"
         type: boolean
         default: false
 
-# 可复用 workflow 声明的权限不能超过调用方持有的权限。本仓库的
-# default_workflow_permissions 是 read，调用方不显式授权的话，被调用方要的
-# packages: write 就成了「超额请求」，整个 run 在启动阶段被拒（startup_failure），
-# 连一个 job 都不会起、也不产生日志——排查时很容易以为是 uses: 的引用写错了。
 permissions:
   contents: read
   packages: write
 
 jobs:
-  # ── 原生架构。GitHub 的 amd64 与 arm64 runner 都是原生，不需要模拟
-  native:
+  # ── 阶段一：selfhost 的共用 stage。mmdebstrap 路径不需要
+  stage:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { did: v4,     prefix: v4,     arch: amd64, runner: ubuntu-22.04 }
-          - { did: v4,     prefix: v4,     arch: arm64, runner: ubuntu-22.04-arm }
-          - { did: v10sp1, prefix: v10sp1, arch: amd64, runner: ubuntu-22.04 }
-          - { did: v10sp1, prefix: v10sp1, arch: arm64, runner: ubuntu-22.04-arm }
-          - { did: v11,    prefix: v11,    arch: amd64, runner: ubuntu-22.04 }
-          - { did: v11,    prefix: v11,    arch: arm64, runner: ubuntu-22.04-arm }
-    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@fd55f11106d30602c5b0dfdad5759547a70edf3b
+          - { did: v4,     arch: amd64, runner: ubuntu-22.04 }
+          - { did: v4,     arch: arm64, runner: ubuntu-22.04-arm }
+          - { did: v10sp1, arch: amd64, runner: ubuntu-22.04 }
+          - { did: v10sp1, arch: arm64, runner: ubuntu-22.04-arm }
+    uses: distrotwin/buildkit/.github/workflows/stage-deb.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
     with:
-      distro-id:  ${{ matrix.did }}
-      arch:       ${{ matrix.arch }}
-      runner:     ${{ matrix.runner }}
-      image:      kylin
-      tag-prefix: ${{ matrix.prefix }}
-      needs-qemu: false
-      push:       ${{ inputs.push == true }}
+      distro-id: ${{ matrix.did }}
+      arch:      ${{ matrix.arch }}
+      runner:    ${{ matrix.runner }}
 
-  # ── LoongArch。没有托管 runner，只能在 amd64 上用 QEMU 模拟。
-  #
-  # 只有 V11 的 loong64 在列。V10 SP1 的 loongarch64 已实测排除：
-  # 它是旧世界 ABI，glibc 2.28 仍在调用 syscall 79/80（newfstatat / fstat），
-  # 而 LoongArch 新世界把这两个调用去掉了，上游 QEMU 的 loongarch64 target
-  # 因此没有实现。最小 rootfs 实跑的表现是打开 libtinfo.so.6、读出 ELF 头后
-  # 报 Unknown syscall 80 退出 127。没有龙芯补丁版 QEMU 或真机就造不出来。
-  #
-  # V11 的 loong64 通过了同一项 smoke test（bash 正常退出，内建 MACHTYPE 为
-  # loongarch64-unknown-linux-gnu）。但跑通一个 bash 不等于跑得完一次 bootstrap，
-  # 完整构建要在模拟下执行几百个维护者脚本，所以仍留在开关后面等首次实跑。
-  #
-  # 另外这两支不是同一条产品线的等价物：V10 SP1 的 LoongArch 版本是 Loongnix
-  # 血脉（libstdc++ 带 lnd 标记），glibc 2.28 + gcc 8.3，比 amd64 的 2.31 + gcc 10.3
-  # 落后一个大版本。conf 里已按架构分别写了基线。
-  loongarch:
-    if: inputs.include-loongarch == true
+  # ── 阶段二 a：selfhost 各档位，复用上游 stage
+  build-selfhost:
+    needs: [stage]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # v10sp1 的 loongarch64 已实测排除，见上方注释，故不列入
-          - { did: v11,    prefix: v11,    arch: loong64 }
-    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@fd55f11106d30602c5b0dfdad5759547a70edf3b
+        did: [v4, v10sp1]
+        arch: [amd64, arm64]
+        tier: [micro, base, devel]
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
     with:
-      distro-id:  ${{ matrix.did }}
-      arch:       ${{ matrix.arch }}
-      runner:     ubuntu-22.04
-      image:      kylin
-      tag-prefix: ${{ matrix.prefix }}
-      needs-qemu: true
-      push:       ${{ inputs.push == true }}
+      distro-id:   ${{ matrix.did }}
+      arch:        ${{ matrix.arch }}
+      tier:        ${{ matrix.tier }}
+      runner:      ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+      needs-stage: true
 
-  # ── 把各架构的单架构 tag 并成 manifest list。只在实际推送过之后才有意义。
-  #
-  # latest 指向最高版本的 devel，这是有意的选择，代价也明确：一旦将来出现 V12，
-  # 钉 latest 的流水线会从 glibc 2.38 静默切到新版本。README 里已写明并建议钉
-  # 带日期的不可变 tag。
-  manifest:
-    needs: [native]
-    if: ${{ inputs.push == true }}
+  # ── 阶段二 b：mmdebstrap 各档位，彼此完全独立
+  build-mmdebstrap:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { prefix: v4,     arches: "amd64 arm64", latest: "" }
-          - { prefix: v10sp1, arches: "amd64 arm64", latest: "" }
-          - { prefix: v11,    arches: "amd64 arm64", latest: "devel" }
-    uses: distrotwin/buildkit/.github/workflows/manifest.yml@fd55f11106d30602c5b0dfdad5759547a70edf3b
+        did: [v11]
+        arch: [amd64, arm64]
+        tier: [micro, base, devel]
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
     with:
-      image:       kylin
-      tag-prefix:  ${{ matrix.prefix }}
-      arches:      ${{ matrix.arches }}
-      latest-tier: ${{ matrix.latest }}
+      distro-id: ${{ matrix.did }}
+      arch:      ${{ matrix.arch }}
+      tier:      ${{ matrix.tier }}
+      runner:    ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+
+  # ── 阶段三：干净机器上装载、启动、全面测试
+  #
+  # 不设 fail-fast：一个镜像挂掉不该掩盖其余镜像的真实状态，报告要完整。
+  test:
+    needs: [build-selfhost, build-mmdebstrap]
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        did: [v4, v10sp1, v11]
+        arch: [amd64, arm64]
+        tier: [micro, base, devel]
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
+    with:
+      distro-id: ${{ matrix.did }}
+      arch:      ${{ matrix.arch }}
+      tier:      ${{ matrix.tier }}
+      runner:    ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+
+  # ── 阶段四：汇总。expected 是结构性守卫——3 版本 × 2 架构 × 3 档位 = 18 份结果，
+  # 少一份就说明有 job 没跑到检查这一步，而那种情况下检查总数会「合法地」变低、
+  # 光看基线抓不住。baseline 取 v10sp1 实测每版本每架构约 134 项的保守下限。
+  report:
+    needs: [test]
+    if: always()
+    uses: distrotwin/buildkit/.github/workflows/report.yml@bb667ffecddc53ea4ce6fe2ee10261d668acddbe
+    with:
+      expected: 18
+      baseline: 700
