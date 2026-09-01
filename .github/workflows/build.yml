@@ -31,7 +31,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@1c517ce341e7f63d9783b84420c65d5340cf9998
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@388c82cae00d1f3d5040d64178e2a317b9a77ebe
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -49,7 +49,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@1c517ce341e7f63d9783b84420c65d5340cf9998
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@388c82cae00d1f3d5040d64178e2a317b9a77ebe
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -59,7 +59,7 @@ jobs:
   report:
     needs: [test]
     if: always()
-    uses: distrotwin/buildkit/.github/workflows/report.yml@1c517ce341e7f63d9783b84420c65d5340cf9998
+    uses: distrotwin/buildkit/.github/workflows/report.yml@388c82cae00d1f3d5040d64178e2a317b9a77ebe
     with:
       expected: 18
-      baseline: 700
+      baseline: 750
