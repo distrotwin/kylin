@@ -43,7 +43,7 @@ jobs:
           - { did: v10sp1, prefix: v10sp1, arch: arm64, runner: ubuntu-22.04-arm }
           - { did: v11,    prefix: v11,    arch: amd64, runner: ubuntu-22.04 }
           - { did: v11,    prefix: v11,    arch: arm64, runner: ubuntu-22.04-arm }
-    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@772affb87af113c3085c10f7c70b270c9e60828c
+    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@ac4d0bb0f0ec7c4f45718d13963835b725b6ede9
     with:
       distro-id:  ${{ matrix.did }}
       arch:       ${{ matrix.arch }}
@@ -76,7 +76,7 @@ jobs:
         include:
           # v10sp1 的 loongarch64 已实测排除，见上方注释，故不列入
           - { did: v11,    prefix: v11,    arch: loong64 }
-    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@772affb87af113c3085c10f7c70b270c9e60828c
+    uses: distrotwin/buildkit/.github/workflows/build-deb.yml@ac4d0bb0f0ec7c4f45718d13963835b725b6ede9
     with:
       distro-id:  ${{ matrix.did }}
       arch:       ${{ matrix.arch }}
@@ -101,7 +101,7 @@ jobs:
           - { prefix: v4,     arches: "amd64 arm64", latest: "" }
           - { prefix: v10sp1, arches: "amd64 arm64", latest: "" }
           - { prefix: v11,    arches: "amd64 arm64", latest: "devel" }
-    uses: distrotwin/buildkit/.github/workflows/manifest.yml@772affb87af113c3085c10f7c70b270c9e60828c
+    uses: distrotwin/buildkit/.github/workflows/manifest.yml@ac4d0bb0f0ec7c4f45718d13963835b725b6ede9
     with:
       image:       kylin
       tag-prefix:  ${{ matrix.prefix }}
