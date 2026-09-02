@@ -1,6 +1,6 @@
 # 银河麒麟桌面操作系统 · 构建与测试镜像
 
-与真实银河麒麟桌面系统尽可能一致的容器环境，用于**软件构建、打包与兼容性测试**。三个大版本、三个档位、跨三种指令集，全部从麒麟官方 apt 归档自举，公开在 GHCR。
+与真实银河麒麟桌面系统尽可能一致的容器环境，用于**软件构建、打包与兼容性测试**。四个大版本、三个档位、跨三种指令集，全部从麒麟官方 apt 归档自举，公开在 GHCR。
 
 ```bash
 docker run --rm ghcr.io/distrotwin/kylin:v11-devel \
@@ -59,9 +59,12 @@ ghcr.io/distrotwin/kylin:<版本>-<档位>
 |---|---|---|---|---|---|
 | `v11` | 银河麒麟桌面 V11（2603） | 2.38 | 12.3 | openKylin 2.0 | amd64 · arm64 · **loong64** |
 | `v10sp1` | 银河麒麟桌面 V10 SP1（2503） | 2.31 | 9.3 | Ubuntu 20.04 | amd64 · arm64 |
+| `v10` | 银河麒麟桌面 V10 原版（`10.0`） | 2.23 | 5.4 | Ubuntu 16.04 | amd64 · arm64 |
 | `v4` | 银河麒麟桌面 V4（4.0.2） | 2.23 | 5.4 | Ubuntu 16.04 | amd64 · arm64 |
 
-不确定目标机器是哪一版，就三个都过一遍，见下面「三个 ABI 世代同时验」。
+**`v10` 与 `v10sp1` 不是一代东西。** V10 原版走的是 v4 代码线（Ubuntu 16.04、glibc 2.23、GCC 5.4，代号同为 `juniper`），SP1 才换到 Ubuntu 20.04 的 glibc 2.31。按版本号顺序想当然会挑错。
+
+不确定目标机器是哪一版，就四个都过一遍，见下面「三个 ABI 世代同时验」。
 
 **再选档位**，按你要在里面做什么：
 
@@ -77,6 +80,7 @@ ghcr.io/distrotwin/kylin:<版本>-<档位>
 docker pull ghcr.io/distrotwin/kylin:v11-devel
 docker pull ghcr.io/distrotwin/kylin:v11          # 同上
 docker pull ghcr.io/distrotwin/kylin:v10sp1-base
+docker pull ghcr.io/distrotwin/kylin:v10-devel     # V10 原版，与 SP1 差一代
 docker pull ghcr.io/distrotwin/kylin:v4-micro
 docker pull ghcr.io/distrotwin/kylin:latest       # = v11-devel
 ```
@@ -186,6 +190,21 @@ UBUNTU_CODENAME=kylin
 PROJECT_CODENAME=v10sp1
 ```
 
+V10 原版——注意 `VERSION_ID` 与 SP1 完全一样：
+
+```
+NAME="Kylin"
+VERSION="V10 (juniper)"
+ID=kylin
+ID_LIKE=debian
+VERSION_ID="v10"
+PRETTY_NAME="Kylin V10"
+HOME_URL="http://www.kylinos.cn/"
+SUPPORT_URL="http://www.kylinos.cn/service.aspx"
+BUG_REPORT_URL="http://www.kylinos.cn/"
+UBUNTU_CODENAME=juniper
+```
+
 V4：
 
 ```
@@ -201,9 +220,15 @@ BUG_REPORT_URL="http://www.kylinos.cn/"
 UBUNTU_CODENAME=juniper
 ```
 
-`VERSION` 那行的中文系统名是厂商自己写进去的，没有比它更直接的证明。V4 那一版还没有中文名。
+`VERSION` 那行的中文系统名是厂商自己写进去的，没有比它更直接的证明。V4 与 V10 原版那两版还没有中文名，它们共用代号 `juniper`——那也是这两版同属一条代码线的痕迹。
 
-脚本里判断平台时有三处要留意：`VERSION_ID` 分不出 SP，V10 SP1 给的是 `v10`，要区分得看 `PRETTY_NAME` 或 `PROJECT_CODENAME`；`ID_LIKE` 在 V11 上消失了，V4 与 V10 SP1 都声明 `debian`，所以 `case "$ID_LIKE" in *debian*)` 会在 V11 上掉进 default 分支；容器里 `uname` 报的是宿主内核，跟麒麟无关。
+脚本里判断平台时有三处要留意。
+
+**`VERSION_ID` 分不出 SP。** V10 原版与 V10 SP1 都给 `v10`，一模一样。要区分只能看 `PRETTY_NAME`（`Kylin V10` 对 `Kylin V10 SP1`），SP1 另有 `PROJECT_CODENAME=v10sp1` 可用。这两版的 glibc 差着 2.23 与 2.31，认错了产物就送不过去。
+
+**`ID_LIKE` 在 V11 上消失了。** V4、V10、V10 SP1 都声明 `debian`，V11 不声明，`case "$ID_LIKE" in *debian*)` 会在 V11 上掉进 default 分支。
+
+**容器里 `uname` 报的是宿主内核**，跟麒麟无关。
 
 ## tag 与钉版
 
@@ -260,7 +285,7 @@ amd64 与 arm64 由原生 runner 构建；V11 另有 loong64（QEMU 模拟构建
 
 所以在 amd64 上验过的构建结论不能直接套用到 loong64。这是厂商产品线的现状，本仓库只是如实反映；每个镜像都把实测值写进了 label，`docker inspect` 一看就知道拉到的是哪一档。
 
-**V10 SP1 与 V4 没有 LoongArch 镜像。** V10 SP1 的 `loongarch64` 是旧世界 ABI：它的 glibc 2.28 仍在调用 `syscall 79/80`（`newfstatat` / `fstat`），而 LoongArch 新世界把这两个调用去掉了，上游 QEMU 的 loongarch64 target 因此没有实现。最小 rootfs 实测的表现是打开 `libtinfo.so.6`、读出 ELF 头后报 `Unknown syscall 80` 退出 127。没有龙芯补丁版 QEMU 或真机就造不出来，所以直接不列入，免得留一个永远红着的 job。V4 则是源里根本没有任何 LoongArch 架构。
+**只有 V11 有 LoongArch 镜像。** V10 原版的源里根本没有这个架构（它有 mips64el、i386、armhf，独独没有 loongarch），V4 同样没有。 V10 SP1 的 `loongarch64` 是旧世界 ABI：它的 glibc 2.28 仍在调用 `syscall 79/80`（`newfstatat` / `fstat`），而 LoongArch 新世界把这两个调用去掉了，上游 QEMU 的 loongarch64 target 因此没有实现。最小 rootfs 实测的表现是打开 `libtinfo.so.6`、读出 ELF 头后报 `Unknown syscall 80` 退出 127。没有龙芯补丁版 QEMU 或真机就造不出来，所以直接不列入，免得留一个永远红着的 job。
 
 ## 已知的怪癖与期望失败
 
@@ -272,19 +297,28 @@ grep: /CurrentlyBuilding: No such file or directory
 
 `/usr/bin/gcc` 不是原生 ELF 而是麒麟的 shell 包装，它 grep 一个只存在于厂商构建系统里的 `/CurrentlyBuilding` 来决定要不要加安全加固选项。镜像里没有这个文件，于是每次调用都报一行。**编译本身照常成功**，这行噪声可以忽略；但如果你的 CI 把 stderr 当失败信号，需要单独放行。V10 SP1 与 V4 的 `gcc` 是原生 ELF，没有这个现象。
 
-**V4 有一项注定红的检查。** 它比其余版本老一个时代，这类项在 `distros/v4.conf` 的 `XFAIL` 里声明，报告中标为 🟡 而不计为失败：
+**V4 与 V10 原版各有一项注定红的检查。** 这两版同属 Ubuntu 16.04 那一代，比其余版本老一个时代，这类项在各自 conf 的 `XFAIL` 里声明，报告中标为 🟡 而不计为失败：
 
-- `elf_broken`：V4 的 gnupg 会装一个链接 `libldap` 的 `gpgkeys_ldap`，而本项目不装 Recommends，`ldd` 必报缺库；ircd 的可选模块 `m_xt.so` 同理。**真实的 V4 装机同样如此**，镜像是忠实的。这条不是「允许有坏 ELF」的通行证，白名单机制仍在，只是这两个文件的缺库状态与真机一致。
+- `elf_broken`：它们的 gnupg 会装一个链接 `libldap` 的 `gpgkeys_ldap`，而本项目不装 Recommends，`ldd` 必报缺库；ircd 的可选模块 `m_xt.so` 同理。**真机装机同样如此**，镜像是忠实的。这条不是「允许有坏 ELF」的通行证，白名单机制仍在，只是这两个文件的缺库状态与真机一致。
 
 判据是「这个现象在真机上也一样吗」。一样就进 `XFAIL`，不一样就是真缺陷。
 
 ## 镜像是怎么造的
 
-三个版本**都不经过 ISO**，直接从麒麟的 apt 归档 `archive.kylinos.cn/kylin/KYLIN-ALL/` bootstrap。V11 走 `mmdebstrap`；V10 SP1 与 V4 走两段式自举，因为宿主 dpkg 写出的 `status` 这两个系统自带的旧 dpkg 读不了。
+四个版本**都不经过 ISO**，直接从麒麟的 apt 归档 `archive.kylinos.cn/kylin/KYLIN-ALL/` bootstrap。V11 走 `mmdebstrap`；其余三个走两段式自举，因为宿主 dpkg 写出的 `status` 它们自带的旧 dpkg 读不了。
 
-有两处容易踩：V10 SP1 的 suite 是 `10.1` 而不是 `10.0`（后者的 `Release` 自述 `Label: v10-离在线更新推送`，是给已装机器推更新的差异源，`universe` 有四万多个包却没有 `libc6`）；V4 要用 `4.0.2-desktop` 而不是 `4.0.2`（`debootstrap` 会核对请求的 suite 名与 `Release` 自述是否一致，而 apt 不核对）。glibc 在这台归档上位于 `universe` 而非 `main`，只配 `main` 会得到一个没有 libc6 的源。
+suite 与 component 都容易踩，而且**规律并不统一**：
 
-每个镜像发布前都在**干净机器上**装载、真正启动、跑完整检查集——构建阶段的机器状态（builder 容器、本地源、宿主装的包）会掩盖镜像自身的缺陷。最近一轮 21 个镜像、905 项检查：899 通过、6 项期望不通过、**零异常**。测试报告与完整日志按系统打包在每次 run 的 artifact 里，成功与失败的都在。
+| 版本 | suite | libc6 所在 component |
+|---|---|---|
+| V11 | `11.0` | `universe` |
+| V10 SP1 | `10.1` | `universe` |
+| V10 原版 | `10.0` | **`main`** |
+| V4 | `4.0.2-desktop` | `universe` |
+
+V4 必须写 `4.0.2-desktop` 而不是 `4.0.2`，因为 `debootstrap` 会核对请求的 suite 名与 `Release` 自述是否一致，而 apt 不核对。V10 原版的 `10.0` 曾被误判为「只是补丁源、没有 libc6」——那是只查了 `universe` 就下的结论，它的 libc6 在 `main`，78 个 `Priority: required` 一个不缺。它的 `Label` 写着「v10-离在线更新推送」，那说的是分发用途，不代表内容不完整。
+
+每个镜像发布前都在**干净机器上**装载、真正启动、跑完整检查集——构建阶段的机器状态（builder 容器、本地源、宿主装的包）会掩盖镜像自身的缺陷。最近一轮 27 个镜像、1167 项检查：1155 通过、12 项期望不通过、**零异常**。测试报告与完整日志按系统打包在每次 run 的 artifact 里，成功与失败的都在。
 
 ## 本地构建
 
@@ -300,12 +334,14 @@ docker build -f buildkit/Dockerfile.builder -t dosbuild-cache buildkit/
 docker run -d --name dosb --privileged --init -v "$PWD:/w" dosbuild-cache sleep infinity
 ```
 
-V10 SP1 与 V4 在宿主起，脚本自己进容器完成阶段一，并自己把产物导成镜像：
+V10 SP1、V10 原版与 V4 在宿主起，脚本自己进容器完成阶段一，并自己把产物导成镜像（把 `DID` 换成 `v10` 或 `v4` 即可）：
 
 ```bash
 sudo ARCH=amd64 ROOT=$PWD DID=v10sp1 buildkit/build/build-selfhost.sh micro base devel
 sudo ARCH=amd64 ROOT=$PWD buildkit/test/verify.sh v10sp1
 ```
+
+这条路径**在 rootless docker 上跑不完**：这三版都装 `makedev`，它要 `mknod`，rootless 下即便 `--privileged` 也是 `Operation not permitted`，半配置的 `makedev` 会卡住后续所有 `dpkg --configure`。要在本地验这三版，宿主得是常规的 rootful docker。
 
 V11 走 `mmdebstrap`，**必须在容器里跑**：宿主 Ubuntu 的 apt 与 mmdebstrap 差了几代，`signed-by` 的解释不同，在宿主上会以 `NO_PUBKEY` 告终，尽管 keyring 里就有那把钥匙。而且 `build.sh` 只落 tarball 不建镜像，导入是单独一步：
 
