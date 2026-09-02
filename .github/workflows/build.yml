@@ -30,10 +30,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        did: [v4, v10sp1, v11]
+        did: [v4, v10, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@abdc92811f47d03f2eb52cf7d2b4a69492a01a1c
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@46378317606f1f46245cbcb56cc1e58420e60c0b
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@abdc92811f47d03f2eb52cf7d2b4a69492a01a1c
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@46378317606f1f46245cbcb56cc1e58420e60c0b
     with:
       distro-id:  v11
       arch:       loong64
@@ -84,10 +84,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        did: [v4, v10sp1, v11]
+        did: [v4, v10, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@abdc92811f47d03f2eb52cf7d2b4a69492a01a1c
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@46378317606f1f46245cbcb56cc1e58420e60c0b
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -101,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@abdc92811f47d03f2eb52cf7d2b4a69492a01a1c
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@46378317606f1f46245cbcb56cc1e58420e60c0b
     with:
       distro-id:  v11
       arch:       loong64
@@ -115,11 +115,11 @@ jobs:
   report:
     needs: [test, test-loong]
     if: always()
-    uses: distrotwin/buildkit/.github/workflows/report.yml@abdc92811f47d03f2eb52cf7d2b4a69492a01a1c
+    uses: distrotwin/buildkit/.github/workflows/report.yml@46378317606f1f46245cbcb56cc1e58420e60c0b
     with:
-      distros:  "v4 v10sp1 v11"
-      expected: ${{ inputs.include-loongarch && 21 || 18 }}
-      baseline: ${{ inputs.include-loongarch && 870 || 750 }}
+      distros:  '["v4","v10","v10sp1","v11"]'
+      expected: ${{ inputs.include-loongarch && 27 || 24 }}
+      baseline: ${{ inputs.include-loongarch && 1120 || 1000 }}
 
   # ── 发布。独立于 build/test，只有显式勾选才跑，且要求 report 真的通过。
   # 镜像一旦推上 GHCR 就公开可拉，这一步不该由日常构建顺带触发。
@@ -133,6 +133,9 @@ jobs:
           - { did: v4,     prefix: v4,     tier: micro, latest: false }
           - { did: v4,     prefix: v4,     tier: base,  latest: false }
           - { did: v4,     prefix: v4,     tier: devel, latest: false }
+          - { did: v10,    prefix: v10,    tier: micro, latest: false }
+          - { did: v10,    prefix: v10,    tier: base,  latest: false }
+          - { did: v10,    prefix: v10,    tier: devel, latest: false }
           - { did: v10sp1, prefix: v10sp1, tier: micro, latest: false }
           - { did: v10sp1, prefix: v10sp1, tier: base,  latest: false }
           - { did: v10sp1, prefix: v10sp1, tier: devel, latest: false }
@@ -140,7 +143,7 @@ jobs:
           - { did: v11,    prefix: v11,    tier: base,  latest: false }
           # latest 指向最高版本的 devel
           - { did: v11,    prefix: v11,    tier: devel, latest: true }
-    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@abdc92811f47d03f2eb52cf7d2b4a69492a01a1c
+    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@46378317606f1f46245cbcb56cc1e58420e60c0b
     with:
       distro-id:  ${{ matrix.did }}
       tier:       ${{ matrix.tier }}
