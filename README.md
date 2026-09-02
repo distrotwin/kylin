@@ -7,17 +7,68 @@ docker run --rm ghcr.io/distrotwin/kylin:v11-devel \
   bash -c 'cat /etc/os-release | grep PRETTY; ldd --version | head -1; gcc -dumpfullversion'
 ```
 
+```
+PRETTY_NAME="Kylin V11"
+ldd (Ubuntu GLIBC 2.38-1ok6.9k0.5) 2.38
+12.3.0
+```
+
 ## 这是什么，不是什么
 
-**它们是替身，不是本体。** 镜像里没有内核；内核态组件（initramfs、TPM、KYSEC LSM 插件）由假包顶替或直接不装；systemd 只保留容器内有意义的部分。真机上依赖内核特性、安全模块或硬件的行为，在这里不成立。
+镜像里没有内核。内核态组件（initramfs、TPM、KYSEC LSM 插件）由假包顶替或干脆不装，systemd 只保留容器内有意义的部分。真机上依赖内核特性、安全模块或硬件的行为，在这里不成立。
 
-判断标准只有一条：**你关心的是「编出来的东西对不对」，还是「跑起来的系统对不对」。**
+所以它适合回答「编出来的东西对不对」，不适合回答「跑起来的系统对不对」。
 
-| | 用它 | 别用它 |
+**该用它**：在 CI 里编出能在麒麟上跑的二进制；验证 `.deb` 打包与依赖；检查产物需要的 glibc / libstdc++ 符号版本目标系统能否满足；复现只在麒麟上出现的编译问题。
+
+**别用它**：当生产运行时基础镜像；复现内核相关的行为；当作麒麟系统的完整替代品做验收测试。后面这几件事得用真机或虚拟机。
+
+## 先跑一遍
+
+进容器，写个 A+B，编了跑。三个版本都做一遍，你就知道该拿它干什么了。
+
+```bash
+docker run -it --rm ghcr.io/distrotwin/kylin:v11-devel /bin/bash
+```
+
+进去以后：
+
+```bash
+echo '#include <stdio.h>
+int main(void){ int a, b; if (scanf("%d %d", &a, &b) != 2) return 1; printf("%d\n", a + b); return 0; }' > ab.c
+
+gcc -O2 -o ab ab.c
+echo "3 4" | ./ab
+objdump -T ab | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+```
+
+```
+7
+GLIBC_2.34
+```
+
+（V11 的 `gcc` 会额外吐一行 `grep: /CurrentlyBuilding: No such file or directory`，那是厂商包装脚本的动静，不影响编译，见下面「怪癖」一节。）
+
+换成另外两个版本，同一份代码、同样输出 `7`，**符号底线却不一样**：
+
+| 镜像 | 运行结果 | 产物要求的最高 glibc 符号 |
 |---|---|---|
-| 场景 | 在 CI 里编出能在麒麟上跑的二进制；验证 `.deb` 打包与依赖；检查产物需要的 glibc / libstdc++ 符号版本目标系统能否满足；复现只在麒麟上出现的编译问题 | 当生产运行时基础镜像；复现内核相关行为；当作麒麟系统的完整替代品做验收测试 |
+| `v11-devel` | `7` | `GLIBC_2.34` |
+| `v10sp1-devel` | `7` | `GLIBC_2.7` |
+| `v4-devel` | `7` | `GLIBC_2.7` |
 
-要「跑起来的系统对不对」，请用真机或虚拟机。这批镜像帮不了你，也不打算帮。
+这个差别决定了产物能往哪儿送。把 V11 编的 `ab` 拿到 V4 里跑：
+
+```bash
+docker run --rm -v "$PWD:/w" -w /w ghcr.io/distrotwin/kylin:v4-micro \
+  bash -c 'echo "3 4" | ./ab'
+```
+
+```
+./ab: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found (required by ./ab)
+```
+
+反过来，V4 编的产物在 V11 上跑得好好的，输出 `7`。**兼容性是单向的：在老版本上编，往新版本上送。** 一个连库都没链的 A+B 就能撞上这堵墙——glibc 2.34 把 `libpthread` 与 `libdl` 并进了 libc，符号版本随之抬高。真实项目只会撞得更早。
 
 ## 选哪一个
 
@@ -33,7 +84,7 @@ ghcr.io/distrotwin/kylin:<版本>-<档位>
 | `v10sp1` | 银河麒麟桌面 V10 SP1（2503） | 2.31 | 9.3 | Ubuntu 20.04 | amd64 · arm64 |
 | `v4` | 银河麒麟桌面 V4（4.0.2） | 2.23 | 5.4 | Ubuntu 16.04 | amd64 · arm64 |
 
-不确定目标机器是哪一版，就三个都过一遍——这正是这批镜像最实际的用法，见下面「三个 ABI 世代同时验」。
+不确定目标机器是哪一版，就三个都过一遍，见下面「三个 ABI 世代同时验」。
 
 **再选档位**，按你要在里面做什么：
 
@@ -119,6 +170,61 @@ docker run --rm --platform linux/loong64 ghcr.io/distrotwin/kylin:v11-devel \
 docker run --rm -it -v "$PWD:/w" -w /w ghcr.io/distrotwin/kylin:v11-devel bash
 ```
 
+## 认出自己在哪个系统上
+
+脚本里要分支、CI 里要判断目标平台，靠的是 `/etc/os-release`。它是 systemd 定的标准格式，可以直接 `source` 进 shell 变量。
+
+```bash
+docker run --rm ghcr.io/distrotwin/kylin:v11-base bash -c '
+  . /etc/os-release
+  echo "$PRETTY_NAME | ID=$ID | ID_LIKE=${ID_LIKE:-（无）} | VERSION_ID=$VERSION_ID"
+  . /etc/lsb-release; echo "DISTRIB_RELEASE=$DISTRIB_RELEASE"
+  echo "dpkg vendor: $(sed -n "s/^Vendor: //p" /etc/dpkg/origins/default)"
+  echo "libc6: $(dpkg-query -W -f="\${Version}" libc6)"
+'
+```
+
+三个版本的输出：
+
+```
+# v11
+Kylin V11 | ID=kylin | ID_LIKE=（无） | VERSION_ID=v11
+DISTRIB_RELEASE=V11
+dpkg vendor: openKylin
+libc6: 2.38-1ok6.9k0.5
+
+# v10sp1
+Kylin V10 SP1 | ID=kylin | ID_LIKE=debian | VERSION_ID=v10
+DISTRIB_RELEASE=V10
+dpkg vendor: Ubuntu
+libc6: 2.31-0kylin9.1k20.3
+
+# v4
+Kylin 4.0-2 | ID=kylin | ID_LIKE=debian | VERSION_ID=4.0-2
+DISTRIB_RELEASE=4.0-2
+dpkg vendor: Ubuntu
+libc6: 2.23-0kord10
+```
+
+有四处需要留意：
+
+**`VERSION_ID` 分不出 SP。** V10 SP1 给的是 `v10`，SP 号不在里面。要区分得看 `PRETTY_NAME`（`Kylin V10 SP1`）或 `/etc/os-release` 里的 `PROJECT_CODENAME=v10sp1`。
+
+**`ID_LIKE` 在 V11 上消失了。** V4 与 V10 SP1 都声明 `debian`，V11 不声明。`case "$ID_LIKE" in *debian*)` 这类写法会在 V11 上掉进 default 分支。判族系请用 `ID=kylin` 加包管理器探测（`command -v dpkg`），别指望 `ID_LIKE`。
+
+**`dpkg vendor` 记着血脉换代。** V4 与 V10 SP1 写 `Ubuntu`，V11 写 `openKylin`——这是 V11 换上游的直接痕迹。
+
+**包版本后缀是很硬的指纹。** `0kord10`（V4）、`0kylin9.1k20.3`（V10 SP1）、`1ok6.9k0.5`（V11，`ok` 即 openKylin）。只拿到一份包列表也能认出是哪一版。
+
+另外两点值得单说。`lsb_release` 这个**命令**三个镜像都没装（它是独立的包），但 `/etc/lsb-release` 这个**文件**在，直接读文件就好。而在容器里 `uname` 报的是**宿主内核**，不是麒麟的：
+
+```
+容器内: Linux 73e0cdf8ec6f 6.8.0-137-generic #137-Ubuntu SMP ... x86_64
+宿主  : Linux pjnl104220238 6.8.0-137-generic #137-Ubuntu SMP ... x86_64
+```
+
+一字不差。userland 是麒麟而 `uname` 说 Ubuntu，所以容器里判断身份不能用 `uname`。
+
 ## tag 与钉版
 
 每个档位同时打这些 tag：
@@ -131,7 +237,7 @@ docker run --rm -it -v "$PWD:/w" -w /w ghcr.io/distrotwin/kylin:v11-devel bash
 | `v11-devel-20260902` | 按 commit 日期，约定不动 |
 | `v11-devel-20260902-amd64` | 单架构，manifest list 的成员 |
 
-**CI 里请用带日期的那个。** 滚动 tag 会随重建变化，`latest` 更会随大版本推进跨越 ABI 边界——那正是这批镜像本该帮你避免的事故。
+**CI 里请用带日期的那个。** 滚动 tag 会随重建变化，`latest` 还会随大版本推进跨越 ABI 边界，把你的构建环境从 glibc 2.31 换成 2.38。
 
 日期取的是**发布时仓库 HEAD 的 commit 日期**（UTC）而非构建时刻，所以同一个 commit 无论何时重建都是同一个 tag。它锁不住的是上游源：同一 commit 隔一周重建，若麒麟归档更新过包则镜像字节不同而 tag 相同。
 
@@ -163,7 +269,7 @@ docker inspect --format '{{json .Config.Labels}}' \
 
 amd64 与 arm64 由原生 runner 构建；V11 另有 loong64（QEMU 模拟构建，实测 micro 约 3 分钟、devel 约 30 分钟）。
 
-**同一个版本号在不同架构下的 ABI 并不一致，这一点必须知道。**
+**同一个版本号在不同架构下的 ABI 并不一致。**
 
 | | amd64 / arm64 | loong64 |
 |---|---|---|
@@ -172,9 +278,9 @@ amd64 与 arm64 由原生 runner 构建；V11 另有 loong64（QEMU 模拟构建
 
 两支的差距不是一个量级。V10 SP1 差着一整个工具链世代；V11 的两支编译器同为 GCC 12.3，分叉在运行时——loong64 那支的 libstdc++ 反而更新一档，多出 `GLIBCXX_3.4.33` 这一级符号。
 
-也就是说，在 amd64 上验过的构建结论不能直接套用到 loong64。这是厂商产品线的事实，不是本仓库的取舍——所以每个镜像都把实测值写进了 label，`docker inspect` 一看就知道拉到的是哪一档。
+所以在 amd64 上验过的构建结论不能直接套用到 loong64。这是厂商产品线的现状，本仓库只是如实反映；每个镜像都把实测值写进了 label，`docker inspect` 一看就知道拉到的是哪一档。
 
-**V10 SP1 与 V4 没有 LoongArch 镜像。** V10 SP1 的 `loongarch64` 是旧世界 ABI：它的 glibc 2.28 仍在调用 `syscall 79/80`（`newfstatat` / `fstat`），而 LoongArch 新世界把这两个调用去掉了，上游 QEMU 的 loongarch64 target 因此没有实现。最小 rootfs 实测的表现是打开 `libtinfo.so.6`、读出 ELF 头后报 `Unknown syscall 80` 退出 127。没有龙芯补丁版 QEMU 或真机就造不出来，所以不列入，而不是留着让它失败。V4 则是源里根本没有任何 LoongArch 架构。
+**V10 SP1 与 V4 没有 LoongArch 镜像。** V10 SP1 的 `loongarch64` 是旧世界 ABI：它的 glibc 2.28 仍在调用 `syscall 79/80`（`newfstatat` / `fstat`），而 LoongArch 新世界把这两个调用去掉了，上游 QEMU 的 loongarch64 target 因此没有实现。最小 rootfs 实测的表现是打开 `libtinfo.so.6`、读出 ELF 头后报 `Unknown syscall 80` 退出 127。没有龙芯补丁版 QEMU 或真机就造不出来，所以直接不列入，免得留一个永远红着的 job。V4 则是源里根本没有任何 LoongArch 架构。
 
 ## 已知的怪癖与期望失败
 
@@ -186,7 +292,7 @@ grep: /CurrentlyBuilding: No such file or directory
 
 `/usr/bin/gcc` 不是原生 ELF 而是麒麟的 shell 包装，它 grep 一个只存在于厂商构建系统里的 `/CurrentlyBuilding` 来决定要不要加安全加固选项。镜像里没有这个文件，于是每次调用都报一行。**编译本身照常成功**，这行噪声可以忽略；但如果你的 CI 把 stderr 当失败信号，需要单独放行。V10 SP1 与 V4 的 `gcc` 是原生 ELF，没有这个现象。
 
-**V4 有两个注定红的检查项。** 它比其余版本老一个时代，这类项在 `distros/v4.conf` 的 `XFAIL` 里声明，报告中标为 🟡 而不计为失败：
+**V4 有一项注定红的检查。** 它比其余版本老一个时代，这类项在 `distros/v4.conf` 的 `XFAIL` 里声明，报告中标为 🟡 而不计为失败：
 
 - `elf_broken`：V4 的 gnupg 会装一个链接 `libldap` 的 `gpgkeys_ldap`，而本项目不装 Recommends，`ldd` 必报缺库；ircd 的可选模块 `m_xt.so` 同理。**真实的 V4 装机同样如此**，镜像是忠实的。这条不是「允许有坏 ELF」的通行证，白名单机制仍在，只是这两个文件的缺库状态与真机一致。
 
