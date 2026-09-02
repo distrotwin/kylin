@@ -33,7 +33,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@b9e0449b083cd3a63a8e891f7eb9b08cdb615922
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@d39622f5f9054cbc5b1bc8a99ddde0e181faf49b
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/build-one.yml@b9e0449b083cd3a63a8e891f7eb9b08cdb615922
+    uses: distrotwin/buildkit/.github/workflows/build-one.yml@d39622f5f9054cbc5b1bc8a99ddde0e181faf49b
     with:
       distro-id:  v11
       arch:       loong64
@@ -70,6 +70,11 @@ jobs:
       # binfmt 没装。产物是 loong64 的，与宿主发行版新旧无关。
       runner:     ubuntu-24.04
       needs-qemu: true
+      # 模拟构建慢得多：micro 档在 QEMU 下就要 322 秒，devel 带 build-essential
+      # 更重。此前按原生的 60 分钟给，devel 恰好被掐在 61 分钟处反复重试。
+      # 150 × 2 = 300 分钟，留在单 job 的 6 小时上限内。
+      timeout-minutes: 150
+      max-attempts: 2
 
   # if: always() —— 某个镜像没建出来，其余镜像的测试结论仍然有价值，
   # 报告要完整而不是一挂全无。缺的那几份由汇总阶段的 expected 抓。
@@ -82,7 +87,7 @@ jobs:
         did: [v4, v10sp1, v11]
         arch: [amd64, arm64]
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@b9e0449b083cd3a63a8e891f7eb9b08cdb615922
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@d39622f5f9054cbc5b1bc8a99ddde0e181faf49b
     with:
       distro-id: ${{ matrix.did }}
       arch:      ${{ matrix.arch }}
@@ -96,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         tier: [micro, base, devel]
-    uses: distrotwin/buildkit/.github/workflows/test-one.yml@b9e0449b083cd3a63a8e891f7eb9b08cdb615922
+    uses: distrotwin/buildkit/.github/workflows/test-one.yml@d39622f5f9054cbc5b1bc8a99ddde0e181faf49b
     with:
       distro-id:  v11
       arch:       loong64
@@ -110,7 +115,7 @@ jobs:
   report:
     needs: [test, test-loong]
     if: always()
-    uses: distrotwin/buildkit/.github/workflows/report.yml@b9e0449b083cd3a63a8e891f7eb9b08cdb615922
+    uses: distrotwin/buildkit/.github/workflows/report.yml@d39622f5f9054cbc5b1bc8a99ddde0e181faf49b
     with:
       distros:  "v4 v10sp1 v11"
       expected: ${{ inputs.include-loongarch && 21 || 18 }}
@@ -135,7 +140,7 @@ jobs:
           - { did: v11,    prefix: v11,    tier: base,  latest: false }
           # latest 指向最高版本的 devel
           - { did: v11,    prefix: v11,    tier: devel, latest: true }
-    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@b9e0449b083cd3a63a8e891f7eb9b08cdb615922
+    uses: distrotwin/buildkit/.github/workflows/publish-one.yml@d39622f5f9054cbc5b1bc8a99ddde0e181faf49b
     with:
       distro-id:  ${{ matrix.did }}
       tier:       ${{ matrix.tier }}
