@@ -30,9 +30,28 @@ docker pull ghcr.io/distrotwin/kylin:v11          # 同上
 docker pull ghcr.io/distrotwin/kylin:v10sp1-base
 ```
 
-## 请钉住不可变 tag
+## 请钉住带日期的 tag
 
-每次发布同时打两个 tag：滚动的 `v11-devel` 跟随最新构建，带日期的 `v11-devel-20260901` 永不变动。**CI 里请用后者。** 滚动 tag 会随重建而变化，`latest` 更会随大版本推进而跨越 ABI 边界——那正是这批镜像本该帮你避免的事故。
+每次发布同时打两个：滚动的 `v11-devel` 跟随最新构建，带日期的 `v11-devel-20260902` 约定不动。**CI 里请用后者。** 滚动 tag 会随重建而变化，`latest` 更会随大版本推进而跨越 ABI 边界——那正是这批镜像本该帮你避免的事故。
+
+日期取的是**发布时仓库 HEAD 的 commit 日期**（UTC），不是构建时刻，所以同一个 commit 无论何时重建都是同一个 tag。它锁不住的是上游源：同一 commit 隔一周重建，若麒麟归档更新过包则镜像字节不同而 tag 相同。要判断手里两个镜像是否同一份，比 `cn.internal.source-date-epoch` 这个 label——它取自源 `Release` 的日期。
+
+**真要钉死请用 digest。** GHCR 的 tag 本来就可变，日期 tag 是约定而非强制；一天内多次发布（调试时）会覆盖它。发布日志里会打印每个 tag 的 `@sha256:...`。
+
+## 镜像自带的溯源信息
+
+```
+docker inspect --format '{{json .Config.Labels}}' ghcr.io/distrotwin/kylin:v11-devel
+```
+
+| label | 内容 |
+|---|---|
+| `cn.internal.kylin-commit` / `buildkit-commit` | 哪份配置与哪份脚本建的 |
+| `cn.internal.suite` / `source-date-epoch` | 源的哪个快照 |
+| `cn.internal.glibc` / `libstdcpp` / `glibcxx` / `arch` | **实测**的 ABI 值，不是 conf 里的期望值 |
+| `cn.internal.build-run` | 跳回当时的 CI 日志与测试报告 |
+
+跨架构时这几个 label 尤其有用：同一个 tag 在不同架构下的 ABI 并不一致（见下节），`docker inspect` 一看就知道拉到的是哪一档。
 
 ## 架构
 
