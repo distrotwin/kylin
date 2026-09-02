@@ -4,11 +4,11 @@
 
 ```bash
 docker run --rm ghcr.io/distrotwin/kylin:v11-devel \
-  bash -c 'cat /etc/os-release | grep PRETTY; ldd --version | head -1; gcc -dumpfullversion'
+  bash -c 'grep -E "^VERSION=" /etc/os-release; ldd --version | head -1; gcc -dumpfullversion'
 ```
 
 ```
-PRETTY_NAME="Kylin V11"
+VERSION="银河麒麟桌面操作系统V11"
 ldd (Ubuntu GLIBC 2.38-1ok6.9k0.5) 2.38
 12.3.0
 ```
@@ -25,7 +25,7 @@ ldd (Ubuntu GLIBC 2.38-1ok6.9k0.5) 2.38
 
 ## 先跑一遍
 
-进容器，写个 A+B，编了跑。三个版本都做一遍，你就知道该拿它干什么了。
+进容器，写个 A+B，编了跑。
 
 ```bash
 docker run -it --rm ghcr.io/distrotwin/kylin:v11-devel /bin/bash
@@ -46,29 +46,6 @@ objdump -T ab | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
 7
 GLIBC_2.34
 ```
-
-（V11 的 `gcc` 会额外吐一行 `grep: /CurrentlyBuilding: No such file or directory`，那是厂商包装脚本的动静，不影响编译，见下面「怪癖」一节。）
-
-换成另外两个版本，同一份代码、同样输出 `7`，**符号底线却不一样**：
-
-| 镜像 | 运行结果 | 产物要求的最高 glibc 符号 |
-|---|---|---|
-| `v11-devel` | `7` | `GLIBC_2.34` |
-| `v10sp1-devel` | `7` | `GLIBC_2.7` |
-| `v4-devel` | `7` | `GLIBC_2.7` |
-
-这个差别决定了产物能往哪儿送。把 V11 编的 `ab` 拿到 V4 里跑：
-
-```bash
-docker run --rm -v "$PWD:/w" -w /w ghcr.io/distrotwin/kylin:v4-micro \
-  bash -c 'echo "3 4" | ./ab'
-```
-
-```
-./ab: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found (required by ./ab)
-```
-
-反过来，V4 编的产物在 V11 上跑得好好的，输出 `7`。**兼容性是单向的：在老版本上编，往新版本上送。** 一个连库都没链的 A+B 就能撞上这堵墙——glibc 2.34 把 `libpthread` 与 `libdl` 并进了 libc，符号版本随之抬高。真实项目只会撞得更早。
 
 ## 选哪一个
 
@@ -172,58 +149,61 @@ docker run --rm -it -v "$PWD:/w" -w /w ghcr.io/distrotwin/kylin:v11-devel bash
 
 ## 认出自己在哪个系统上
 
-脚本里要分支、CI 里要判断目标平台，靠的是 `/etc/os-release`。它是 systemd 定的标准格式，可以直接 `source` 进 shell 变量。
-
 ```bash
-docker run --rm ghcr.io/distrotwin/kylin:v11-base bash -c '
-  . /etc/os-release
-  echo "$PRETTY_NAME | ID=$ID | ID_LIKE=${ID_LIKE:-（无）} | VERSION_ID=$VERSION_ID"
-  . /etc/lsb-release; echo "DISTRIB_RELEASE=$DISTRIB_RELEASE"
-  echo "dpkg vendor: $(sed -n "s/^Vendor: //p" /etc/dpkg/origins/default)"
-  echo "libc6: $(dpkg-query -W -f="\${Version}" libc6)"
-'
+docker run --rm ghcr.io/distrotwin/kylin:v11-base cat /etc/os-release
 ```
 
-三个版本的输出：
-
 ```
-# v11
-Kylin V11 | ID=kylin | ID_LIKE=（无） | VERSION_ID=v11
-DISTRIB_RELEASE=V11
-dpkg vendor: openKylin
-libc6: 2.38-1ok6.9k0.5
-
-# v10sp1
-Kylin V10 SP1 | ID=kylin | ID_LIKE=debian | VERSION_ID=v10
-DISTRIB_RELEASE=V10
-dpkg vendor: Ubuntu
-libc6: 2.31-0kylin9.1k20.3
-
-# v4
-Kylin 4.0-2 | ID=kylin | ID_LIKE=debian | VERSION_ID=4.0-2
-DISTRIB_RELEASE=4.0-2
-dpkg vendor: Ubuntu
-libc6: 2.23-0kord10
+NAME="Kylin"
+FULL_NAME="kylin"
+VERSION="银河麒麟桌面操作系统V11"
+VERSION_US="Kylin Linux Desktop V11"
+ID=kylin
+PRETTY_NAME="Kylin V11"
+VERSION_ID="v11"
+HOME_URL="http://www.kylinos.cn/"
+VERSION_CODENAME=kylin
+PRODUCT_FEATURES=3
+KYLIN_RELEASE_ID="V11"
 ```
 
-有四处需要留意：
-
-**`VERSION_ID` 分不出 SP。** V10 SP1 给的是 `v10`，SP 号不在里面。要区分得看 `PRETTY_NAME`（`Kylin V10 SP1`）或 `/etc/os-release` 里的 `PROJECT_CODENAME=v10sp1`。
-
-**`ID_LIKE` 在 V11 上消失了。** V4 与 V10 SP1 都声明 `debian`，V11 不声明。`case "$ID_LIKE" in *debian*)` 这类写法会在 V11 上掉进 default 分支。判族系请用 `ID=kylin` 加包管理器探测（`command -v dpkg`），别指望 `ID_LIKE`。
-
-**`dpkg vendor` 记着血脉换代。** V4 与 V10 SP1 写 `Ubuntu`，V11 写 `openKylin`——这是 V11 换上游的直接痕迹。
-
-**包版本后缀是很硬的指纹。** `0kord10`（V4）、`0kylin9.1k20.3`（V10 SP1）、`1ok6.9k0.5`（V11，`ok` 即 openKylin）。只拿到一份包列表也能认出是哪一版。
-
-另外两点值得单说。`lsb_release` 这个**命令**三个镜像都没装（它是独立的包），但 `/etc/lsb-release` 这个**文件**在，直接读文件就好。而在容器里 `uname` 报的是**宿主内核**，不是麒麟的：
+V10 SP1：
 
 ```
-容器内: Linux 73e0cdf8ec6f 6.8.0-137-generic #137-Ubuntu SMP ... x86_64
-宿主  : Linux pjnl104220238 6.8.0-137-generic #137-Ubuntu SMP ... x86_64
+NAME="Kylin"
+VERSION="银河麒麟桌面操作系统V10 (SP1)"
+VERSION_US="Kylin Linux Desktop V10 (SP1)"
+ID=kylin
+ID_LIKE=debian
+PRETTY_NAME="Kylin V10 SP1"
+VERSION_ID="v10"
+HOME_URL="http://www.kylinos.cn/"
+SUPPORT_URL="http://www.kylinos.cn/support/technology.html"
+BUG_REPORT_URL="http://www.kylinos.cn/"
+PRIVACY_POLICY_URL="http://www.kylinos.cn"
+VERSION_CODENAME=kylin
+UBUNTU_CODENAME=kylin
+PROJECT_CODENAME=v10sp1
 ```
 
-一字不差。userland 是麒麟而 `uname` 说 Ubuntu，所以容器里判断身份不能用 `uname`。
+V4：
+
+```
+NAME="Kylin"
+VERSION="4.0-2 (juniper)"
+ID=kylin
+ID_LIKE=debian
+PRETTY_NAME="Kylin 4.0-2"
+VERSION_ID="4.0-2"
+HOME_URL="http://www.kylinos.cn/"
+SUPPORT_URL="http://www.kylinos.cn/content/service/service.html"
+BUG_REPORT_URL="http://www.kylinos.cn/"
+UBUNTU_CODENAME=juniper
+```
+
+`VERSION` 那行的中文系统名是厂商自己写进去的，没有比它更直接的证明。V4 那一版还没有中文名。
+
+脚本里判断平台时有三处要留意：`VERSION_ID` 分不出 SP，V10 SP1 给的是 `v10`，要区分得看 `PRETTY_NAME` 或 `PROJECT_CODENAME`；`ID_LIKE` 在 V11 上消失了，V4 与 V10 SP1 都声明 `debian`，所以 `case "$ID_LIKE" in *debian*)` 会在 V11 上掉进 default 分支；容器里 `uname` 报的是宿主内核，跟麒麟无关。
 
 ## tag 与钉版
 
