@@ -25,46 +25,22 @@ ldd (Ubuntu GLIBC 2.38-1ok6.9k0.5) 2.38
 
 ## 镜像等于公开归档，不等于安装介质
 
-这一节讲清楚镜像和真机之间那道缝，因为它直接影响你怎么解读 CI 的结果。
-
-镜像的每一个包都来自麒麟的公开 apt 归档，而客户手上装的是厂商 respin 的安装介质，两者不是同一批构建。我们用 HTTP Range 直接读 ISO 里的 `casper/filesystem.manifest`（约 10 KB，不用下整盘）跟已发布的 devel 档逐包对过账。看这种差异要把两件事分开：**厂商构建号不同**是同一份上游代码重新打包，**上游版本也不同**才是真的落后。
+镜像的每一个包都来自麒麟的公开 apt 归档，而客户手上装的是厂商 respin 的安装介质，两者不是同一批构建。差异用 ISO 盘内的装机清单（`casper/filesystem.manifest`）与 devel 档逐包比出来，看的时候要把两件事分开：**厂商构建号不同**是同一份上游代码重新打包，**上游版本也不同**才是真的落后。
 
 | 版本 | 对照介质 | 共有包 | 版本串不同 | 上游版本也不同 |
 |---|---|---|---|---|
 | V11 | 2603 (20260228) | 248 | 89 | **2** |
 | V10 SP1 | 2503 (20250430) | 252 | 96 | **17** |
 
-**V11 按上游版本看跟介质是齐的。** 那 2 项是 `kytrusted-utils` 与 `libkytrusted-security`，可信计算组件、内核态，本来就不在覆盖范围内（见下面「这是什么，不是什么」）。其余 87 项只是厂商重打包的构建号，`ca-certificates` 的上游日期与介质相同。
+**V11 按上游版本看跟介质是齐的。** 那 2 项是 `kytrusted-utils` 与 `libkytrusted-security`，可信计算组件、内核态，本来就不在覆盖范围内。其余 87 项只是厂商重打包的构建号，`ca-certificates` 的上游日期与介质相同。
 
-**V10 SP1 仍落后，但已经补过一轮。** 它的基础 suite `10.1` 是冻结的发布树，厂商把后续构建放在独立的 `-updates` suite 里——就写在官方 sources.list 文档中。配上 `10.1-2403-updates` 与 `10.1-2203-updates` 之后，与介质的差异从 171 项降到 96 项，上游版本不同的从 34 项降到 17 项：
-
-| 包 | 配之前 | 现在 | 介质 |
-|---|---|---|---|
-| `ca-certificates` | 20210119 | **20230311** | 20240203 |
-| `openssl` / `libssl1.1` | 2.12k1 | **2.22k0.1** | 2.23k0.4 |
-| `libc6` | k20.3 | **k21.4** | k22.0 |
-| `tzdata` | 2021a | **2021e** | 2021e |
-| `base-files` | k9 | **k13.5** | k13.7 |
-
-`ca-certificates` 这一项最要紧，也是补它的主要理由。旧根证书不属于「旧但保守」那一类：它会让**构建期拉 https 失败而客户真机不会**——那是真机不存在的假失败，方向比单纯落后更糟。
+**V10 SP1 的 17 项集中在两处**：`python3.8`（3.8.2 对介质的 3.8.10）与 Qt / GLib（`libqt5core5a` 5.12.8 对 5.12.12、`libglib2.0-0` 2.64.2 对 2.64.6）是真的旧；其余是 KYSEC 与 `initramfs-tools` 这些内核态与安全模块组件，不在覆盖范围内。安全相关的包已经跟上：`ca-certificates` 20230311、`openssl` 1.1.1f-1kylin2.22k0.1、`tzdata` 2021e。这靠的是在基础 suite `10.1` 之外另配厂商自己文档里列的两个更新源——`10.1` 是冻结的发布树，后续构建都在独立的 `-updates` suite 里。
 
 **ABI 层面两个版本都对得上。** `libstdc++6` 与 `libgcc-s1` 和介质逐字符相同，`libc6` 只差厂商构建号、上游版本相同。所以「符号版本够不够」「链得上链不上」这类问题，镜像给出的答案和真机一致——这正是这套镜像要回答的问题。
 
 **四个版本里只有 V10 SP1 有更新源。** V11、V4 的 `-updates` 候选全部 404（探测时带一条必然不存在的假 suite 做对照，它同样 404，说明这台主机确实区分真假路径、不是被拦）。V10 原版不需要——它的 suite `10.0` 自述 `Label: v10-离在线更新推送`，本身就是滚动的更新通道。
 
-剩下补不齐的是材料的边界，不是配置疏漏：厂商 respin 里有一批构建从未推到公开归档。**要与某张具体介质完全一致，只有拿那张 ISO 切片**，那是另一条路径（[统信 UOS 镜像](https://github.com/distrotwin/uos)走的就是它，代价是只含依赖闭包内的子集）。
-
-自己核这组数字：
-
-```bash
-python3 - <<'EOF'
-import sys; sys.path.insert(0, 'buildkit/tools')
-from iso9660 import ISO
-iso = ISO("<ISO 直链>"); e = iso.find("casper/filesystem.manifest")
-media = dict(l.split()[:2] for l in iso.cat(e).decode().splitlines() if l.split())
-EOF
-docker run --rm --entrypoint dpkg-query ghcr.io/distrotwin/kylin:v10sp1-devel -W -f='${Package} ${Version}\n'
-```
+剩下的差异是材料的边界，不是配置疏漏：厂商 respin 里有一批构建从未推到公开归档。**要与某张具体介质完全一致，只有拿那张 ISO 切片**，那是另一条路径（[统信 UOS 镜像](https://github.com/distrotwin/uos)走的就是它，代价是只含依赖闭包内的子集）。
 
 
 ## 先跑一遍
