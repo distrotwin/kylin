@@ -264,7 +264,7 @@ docker inspect --format '{{json .Config.Labels}}' \
 |---|---|
 | `cn.internal.glibc` / `libstdcpp` / `glibcxx` | **实测**的 ABI 值，来自测试阶段在干净机器上跑出来的结果，不是配置里的期望值 |
 | `cn.internal.arch` / `tier` / `suite` / `build-method` | 架构、档位、建自源的哪个 suite、走的哪条构建路径 |
-| `cn.internal.kylin-commit` / `buildkit-commit` | 哪份配置与哪份脚本建的 |
+| `cn.internal.repo-commit` / `buildkit-commit` | 哪份配置与哪份脚本建的（2026-09-03 之前发布的镜像里这一项叫 `cn.internal.kylin-commit`——那个名字把仓库名写死进了公共 workflow，已改成通用的） |
 | `cn.internal.build-run` | 跳回当时的 CI 日志与测试报告 |
 | `org.opencontainers.image.*` | 标准溯源字段：源仓库、revision、version |
 
